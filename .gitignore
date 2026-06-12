@@ -1,0 +1,20 @@
+# Ignore everything by default; explicitly allow only non-sensitive sync files.
+*
+
+!.gitignore
+!README.md
+!settings.example.json
+
+!extensions/
+!extensions/*.ts
+
+!model-usage/
+!model-usage/config.json
+
+# Never commit secrets, sessions, trust decisions, or usage history.
+auth.json
+trust.json
+sessions/
+codex-usage/
+model-usage/sessions.json
+*.bak.*

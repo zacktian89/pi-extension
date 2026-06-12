@@ -1,0 +1,22 @@
+{
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
+  "defaultThinkingLevel": "medium",
+  "packages": [
+    "npm:pi-web-access",
+    "npm:pi-powerline-footer"
+  ],
+  "powerline": {
+    "preset": "nerd",
+    "fixedEditor": false,
+    "mouseScroll": false,
+    "git": {
+      "polling": "branch"
+    }
+  },
+  "theme": "tokyo-night-pi",
+  "editorPaddingX": 0,
+  "terminal": {
+    "showTerminalProgress": true
+  }
+}
