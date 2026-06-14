@@ -2,13 +2,22 @@
 
 Personal pi extension and non-sensitive sync config.
 
-## Contents
+## Layout
 
-- `index.ts` - pi auto-discovery entrypoint that loads all extensions in this repo.
-- `extensions/context-growth.ts` - context growth progress widget.
-- `extensions/model-usage-report.ts` - `/usage` report for model token/cost usage; Codex calls get extra 5h/weekly quota percentage.
-- `model-usage/config.json` - non-sensitive config for the usage extension, currently Codex quota limits. Runtime usage history is written to `model-usage/sessions.json` inside this extension directory and is git-ignored.
-- `settings.example.json` - sanitized pi settings example. It intentionally excludes auth, trust, session history, local absolute package paths, and usage history.
+```text
+~/.pi/agent/extensions/pi-extension/
+├── index.ts                         # pi auto-discovery entrypoint; loads all extensions
+├── extensions/
+│   ├── context-growth.ts            # context growth widget + Codex 5h/7d quota remaining
+│   └── model-usage-report.ts        # /usage report for token/cost/Codex call usage
+├── model-usage/                     # local runtime data, git-ignored
+│   ├── sessions.json                # generated usage history
+│   └── config.json                  # generated only if /usage quota ... is used
+├── settings.example.json            # sanitized pi settings example
+└── README.md
+```
+
+`model-usage/` is intentionally local-only. Do not commit generated usage history or quota config.
 
 ## Install / sync on another device
 
@@ -43,6 +52,6 @@ Do not commit:
 - `auth.json`
 - `trust.json`
 - `sessions/`
-- `model-usage/sessions.json`
-- `codex-usage/sessions.json`
+- `model-usage/`
+- `codex-usage/`
 - machine-local absolute paths or API keys
