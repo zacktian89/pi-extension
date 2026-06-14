@@ -6,8 +6,10 @@ import { join } from "node:path";
 
 const STATUS_ID = "model-usage";
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-const STORE_DIR = join(AGENT_DIR, "model-usage");
+const EXTENSION_DIR = join(AGENT_DIR, "extensions", "pi-extension");
+const STORE_DIR = join(EXTENSION_DIR, "model-usage");
 const LEGACY_STORE_FILE = join(AGENT_DIR, "codex-usage", "sessions.json");
+const LEGACY_MODEL_USAGE_FILE = join(AGENT_DIR, "model-usage", "sessions.json");
 const STORE_FILE = join(STORE_DIR, "sessions.json");
 const CONFIG_FILE = join(STORE_DIR, "config.json");
 
@@ -217,7 +219,11 @@ function loadStore(): Store {
 	const envQuota = defaultQuota();
 	const configQuota = loadQuotaFromConfig();
 	try {
-		const source = existsSync(STORE_FILE) ? STORE_FILE : LEGACY_STORE_FILE;
+		const source = existsSync(STORE_FILE)
+			? STORE_FILE
+			: existsSync(LEGACY_MODEL_USAGE_FILE)
+				? LEGACY_MODEL_USAGE_FILE
+				: LEGACY_STORE_FILE;
 		const store = JSON.parse(readFileSync(source, "utf8")) as Store;
 		store.quota = {
 			fiveHourTokens: envQuota.fiveHourTokens ?? configQuota.fiveHourTokens ?? store.quota?.fiveHourTokens,

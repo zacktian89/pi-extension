@@ -4,21 +4,19 @@ Personal pi extension and non-sensitive sync config.
 
 ## Contents
 
+- `index.ts` - pi auto-discovery entrypoint that loads all extensions in this repo.
 - `extensions/context-growth.ts` - context growth progress widget.
 - `extensions/model-usage-report.ts` - `/usage` report for model token/cost usage; Codex calls get extra 5h/weekly quota percentage.
-- `model-usage/config.json` - non-sensitive config for the usage extension, currently Codex quota limits.
+- `model-usage/config.json` - non-sensitive config for the usage extension, currently Codex quota limits. Runtime usage history is written to `model-usage/sessions.json` inside this extension directory and is git-ignored.
 - `settings.example.json` - sanitized pi settings example. It intentionally excludes auth, trust, session history, local absolute package paths, and usage history.
 
 ## Install / sync on another device
 
-Clone this repo into a temporary directory, then copy the files into your pi agent directory:
+Clone this repo directly under the pi global extensions directory:
 
 ```bash
-git clone git@github.com:zacktian89/pi-extension.git
-cd pi-extension
-mkdir -p ~/.pi/agent/extensions ~/.pi/agent/model-usage
-cp extensions/*.ts ~/.pi/agent/extensions/
-cp model-usage/config.json ~/.pi/agent/model-usage/config.json
+mkdir -p ~/.pi/agent/extensions
+git clone git@github.com:zacktian89/pi-extension.git ~/.pi/agent/extensions/pi-extension
 # Optional: review first, then merge/copy settings.example.json into ~/.pi/agent/settings.json
 ```
 
