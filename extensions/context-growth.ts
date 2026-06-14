@@ -1,5 +1,8 @@
 import type { ExtensionAPI, ExtensionContext, ContextUsage } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 type Segment = {
 	label: string;
@@ -13,6 +16,20 @@ const BAR_WIDTH = 36;
 const COLORS = [196, 202, 208, 220, 118, 48, 51, 45, 33, 99, 129, 165, 201, 207, 213];
 const BASE_COLOR = 93;
 const EMPTY_COLOR = 236;
+const AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+const STORE_FILE = join(AGENT_DIR, "extensions", "pi-extension", "model-usage", "sessions.json");
+const LEGACY_STORE_FILE = join(AGENT_DIR, "model-usage", "sessions.json");
+
+type CodexStats = {
+	fiveHourUsed: number;
+	weeklyUsed: number;
+	fiveHourQuota?: number;
+	weeklyQuota?: number;
+	fiveHourRemaining?: number;
+	weeklyRemaining?: number;
+	fiveHourRemainingDelta?: number;
+	weeklyRemainingDelta?: number;
+};
 
 function fmtTokens(n: number): string {
 	if (!Number.isFinite(n)) return "?";
@@ -32,6 +49,100 @@ function bg256(color: number, text: string): string {
 function pct(tokens: number | null, window: number): string {
 	if (tokens === null || !window) return "?";
 	return `${((tokens / window) * 100).toFixed(1)}%`;
+}
+
+function parseQuota(value: string | undefined): number | undefined {
+	if (!value) return undefined;
+	const match = value.trim().toLowerCase().match(/^([0-9]+(?:\.[0-9]+)?)(k|m|b)?$/);
+	if (!match) return undefined;
+	const base = Number(match[1]);
+	const multiplier = match[2] === "k" ? 1_000 : match[2] === "m" ? 1_000_000 : match[2] === "b" ? 1_000_000_000 : 1;
+	return Number.isFinite(base) && base > 0 ? Math.round(base * multiplier) : undefined;
+}
+
+function isCodexTurn(turn: { provider?: string; model?: string }): boolean {
+	const provider = (turn.provider ?? "").toLowerCase();
+	const model = (turn.model ?? "").toLowerCase();
+	return provider.includes("codex") || model.includes("codex") || (provider.includes("openai") && model.includes("gpt-5-codex"));
+}
+
+function sessionKey(ctx: ExtensionContext): string {
+	return ctx.sessionManager.getSessionFile() ?? `ephemeral:${ctx.cwd}`;
+}
+
+function currentCodexTurns(ctx: ExtensionContext) {
+	const turns: Array<{ time?: string; provider?: string; model?: string }> = [];
+	for (const entry of ctx.sessionManager.getBranch() as any[]) {
+		if (entry.type !== "message") continue;
+		const message = entry.message;
+		if (message?.role !== "assistant" || !message.usage) continue;
+		const turn = {
+			time: typeof message.timestamp === "number" ? new Date(message.timestamp).toISOString() : undefined,
+			provider: typeof message.provider === "string" ? message.provider : undefined,
+			model: typeof message.model === "string" ? message.model : undefined,
+		};
+		if (isCodexTurn(turn)) turns.push(turn);
+	}
+	return turns;
+}
+
+function loadStore(): any {
+	const source = existsSync(STORE_FILE) ? STORE_FILE : LEGACY_STORE_FILE;
+	try {
+		return JSON.parse(readFileSync(source, "utf8"));
+	} catch {
+		return { version: 1, sessions: {}, quota: {} };
+	}
+}
+
+function countWindowCodexCalls(sessions: any[], sinceMs: number): number {
+	let count = 0;
+	for (const session of sessions) {
+		for (const turn of session.turns ?? []) {
+			const time = turn.time ? Date.parse(turn.time) : Date.parse(session.updatedAt);
+			if (Number.isFinite(time) && time >= sinceMs && isCodexTurn(turn)) count += 1;
+		}
+	}
+	return count;
+}
+
+function computeCodexStats(ctx: ExtensionContext, previous?: CodexStats): CodexStats {
+	const store = loadStore();
+	const sessions = { ...(store.sessions ?? {}) };
+	const key = sessionKey(ctx);
+	sessions[key] = {
+		sessionFile: key,
+		cwd: ctx.cwd,
+		updatedAt: new Date().toISOString(),
+		turns: currentCodexTurns(ctx),
+	};
+
+	const now = Date.now();
+	const fiveHourUsed = countWindowCodexCalls(Object.values(sessions), now - 5 * 60 * 60 * 1000);
+	const weeklyUsed = countWindowCodexCalls(Object.values(sessions), now - 7 * 24 * 60 * 60 * 1000);
+	const fiveHourQuota = parseQuota(process.env.PI_CODEX_5H_TOKEN_QUOTA) ?? store.quota?.fiveHourTokens;
+	const weeklyQuota = parseQuota(process.env.PI_CODEX_WEEKLY_TOKEN_QUOTA) ?? store.quota?.weeklyTokens;
+	const fiveHourRemaining = fiveHourQuota === undefined ? undefined : Math.max(0, fiveHourQuota - fiveHourUsed);
+	const weeklyRemaining = weeklyQuota === undefined ? undefined : Math.max(0, weeklyQuota - weeklyUsed);
+	return {
+		fiveHourUsed,
+		weeklyUsed,
+		fiveHourQuota,
+		weeklyQuota,
+		fiveHourRemaining,
+		weeklyRemaining,
+		fiveHourRemainingDelta: previous?.fiveHourRemaining === undefined || fiveHourRemaining === undefined ? undefined : fiveHourRemaining - previous.fiveHourRemaining,
+		weeklyRemainingDelta: previous?.weeklyRemaining === undefined || weeklyRemaining === undefined ? undefined : weeklyRemaining - previous.weeklyRemaining,
+	};
+}
+
+function fmtCalls(n: number | undefined): string {
+	return n === undefined ? "?" : n.toLocaleString();
+}
+
+function fmtDelta(n: number | undefined): string {
+	if (!n) return "";
+	return n > 0 ? ` ↑${n.toLocaleString()}` : ` ↓${Math.abs(n).toLocaleString()}`;
 }
 
 function renderStackedBar(baseTokens: number, segments: Segment[], usage: ContextUsage | undefined): string {
@@ -106,6 +217,7 @@ export default function (pi: ExtensionAPI) {
 	let usage: ContextUsage | undefined;
 	let segments: Segment[] = [];
 	let sampleNo = 0;
+	let codexStats: CodexStats | undefined;
 
 	function reset(ctx: ExtensionContext) {
 		usage = ctx.getContextUsage();
@@ -115,8 +227,13 @@ export default function (pi: ExtensionAPI) {
 		sampleNo = 0;
 	}
 
+	function refreshCodexStats(ctx: ExtensionContext) {
+		codexStats = computeCodexStats(ctx, codexStats);
+	}
+
 	function installWidget(ctx: ExtensionContext) {
 		if (!ctx.hasUI) return;
+		refreshCodexStats(ctx);
 		if (!enabled) {
 			ctx.ui.setWidget(WIDGET_ID, undefined);
 			ctx.ui.setStatus(STATUS_ID, undefined);
@@ -137,8 +254,12 @@ export default function (pi: ExtensionAPI) {
 						.slice(-6)
 						.map((s) => `${fg256(s.color, "■")} ${s.label}+${fmtTokens(s.tokens)}`)
 						.join(theme.fg("dim", "  "));
+					const codex = codexStats
+						? theme.fg("accent", "Codex") + theme.fg("dim", ` 5h left ${fmtCalls(codexStats.fiveHourRemaining)}/${fmtCalls(codexStats.fiveHourQuota)}${fmtDelta(codexStats.fiveHourRemainingDelta)} (used ${codexStats.fiveHourUsed.toLocaleString()}) • 7d left ${fmtCalls(codexStats.weeklyRemaining)}/${fmtCalls(codexStats.weeklyQuota)}${fmtDelta(codexStats.weeklyRemainingDelta)} (used ${codexStats.weeklyUsed.toLocaleString()})`)
+						: undefined;
 
 					const lines = [title, bar];
+					if (codex) lines.push(codex);
 					if (recent) lines.push(theme.fg("dim", "Rounds: ") + recent);
 					return lines.map((line) => {
 						if (visibleWidth(line) <= width) return line;
