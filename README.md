@@ -1,6 +1,18 @@
-# pi-extension
+# pi-context-growth
 
-Personal pi extension and non-sensitive sync config.
+A Pi package that adds a colored context usage and growth widget.
+
+Install from npm after publication:
+
+```bash
+pi install npm:pi-context-growth
+```
+
+Or install directly from GitHub:
+
+```bash
+pi install git:github.com/zacktian89/pi-extension
+```
 
 ## Layout
 
@@ -8,7 +20,7 @@ Personal pi extension and non-sensitive sync config.
 ~/.pi/agent/
 ├── index.ts                         # pi auto-discovery entrypoint; loads all extensions
 ├── extensions/
-│   ├── context-growth.ts            # context growth widget + Codex 5h/7d display
+│   ├── context-growth.ts            # context growth widget
 │   └── codex-usage.ts               # Codex subscription usage and rate-limit statusline
 ├── settings.example.json            # sanitized pi settings example
 └── README.md
@@ -38,13 +50,6 @@ Reload pi after copying:
 /context-growth reset
 /context-growth off
 /context-growth on
-```
-
-Optional Codex call quotas can be supplied with environment variables:
-
-```text
-PI_CODEX_5H_CALL_QUOTA=150
-PI_CODEX_WEEKLY_CALL_QUOTA=1000
 ```
 
 ### Codex usage status commands

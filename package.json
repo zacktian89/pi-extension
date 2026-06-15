@@ -1,0 +1,36 @@
+{
+  "name": "pi-context-growth",
+  "version": "0.1.0",
+  "description": "A Pi extension that shows a colored context usage and growth widget.",
+  "license": "MIT",
+  "author": "zacktian89",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/zacktian89/pi-extension.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zacktian89/pi-extension/issues"
+  },
+  "homepage": "https://github.com/zacktian89/pi-extension#readme",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "context",
+    "tokens",
+    "tui"
+  ],
+  "files": [
+    "extensions/context-growth.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/context-growth.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  }
+}

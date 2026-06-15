@@ -3,6 +3,8 @@
 
 !.gitignore
 !README.md
+!LICENSE
+!package.json
 !settings.example.json
 !index.ts
 
