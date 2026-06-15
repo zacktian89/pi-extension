@@ -239,13 +239,7 @@ export default function (pi: ExtensionAPI) {
 						.slice(-6)
 						.map((s) => `${fg256(s.color, "■")} ${s.label}+${fmtTokens(s.tokens)}`)
 						.join(theme.fg("dim", "  "));
-					const codexLine = codexStats ? codexStatsLine(codexStats) : undefined;
-					const codex = codexLine
-						? theme.fg("accent", "Codex") + theme.fg("dim", ` ${codexLine}`)
-						: undefined;
-
 					const lines = [title, bar];
-					if (codex) lines.push(codex);
 					if (recent) lines.push(theme.fg("dim", "Rounds: ") + recent);
 					return lines.map((line) => {
 						if (visibleWidth(line) <= width) return line;
