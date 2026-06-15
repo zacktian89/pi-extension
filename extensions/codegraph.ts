@@ -57,6 +57,11 @@ function toolResult(text: string, details: Record<string, unknown>) {
 	};
 }
 
+function isNotInitializedError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /codegraph\s+not\s+initialized/i.test(message) || /not\s+initialized/i.test(message);
+}
+
 export default function codegraphExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "codegraph_status",
@@ -189,13 +194,26 @@ export default function codegraphExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("codegraph-sync", {
-		description: "Run CodeGraph incremental sync for the current project.",
+		description: "Run CodeGraph incremental sync for the current project. Initializes CodeGraph first when needed.",
 		handler: async (_args, ctx) => {
 			try {
 				const text = await runCodeGraph(["sync"], ctx, 120_000);
 				ctx.ui.notify(`CodeGraph sync complete\n${text.slice(0, 600)}`, "info");
 			} catch (error) {
-				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+				if (!isNotInitializedError(error)) {
+					ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+					return;
+				}
+
+				try {
+					ctx.ui.notify("CodeGraph is not initialized for this project. Running codegraph init . first...", "info");
+					const initText = await runCodeGraph(["init", "."], ctx, 300_000);
+					const syncText = await runCodeGraph(["sync"], ctx, 120_000);
+					const text = [`[init]\n${initText}`, `[sync]\n${syncText}`].join("\n\n");
+					ctx.ui.notify(`CodeGraph initialized and synced\n${text.slice(0, 600)}`, "info");
+				} catch (initOrSyncError) {
+					ctx.ui.notify(initOrSyncError instanceof Error ? initOrSyncError.message : String(initOrSyncError), "error");
+				}
 			}
 		},
 	});
