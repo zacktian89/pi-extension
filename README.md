@@ -8,16 +8,10 @@ Personal pi extension and non-sensitive sync config.
 ~/.pi/agent/extensions/pi-extension/
 ├── index.ts                         # pi auto-discovery entrypoint; loads all extensions
 ├── extensions/
-│   ├── context-growth.ts            # context growth widget + Codex 5h/7d quota remaining
-│   └── model-usage-report.ts        # /usage report for token/cost/Codex call usage
-├── model-usage/                     # local runtime data, git-ignored
-│   ├── sessions.json                # generated usage history
-│   └── config.json                  # generated only if /usage quota ... is used
+│   └── context-growth.ts            # context growth widget + Codex 5h/7d display
 ├── settings.example.json            # sanitized pi settings example
 └── README.md
 ```
-
-`model-usage/` is intentionally local-only. Do not commit generated usage history or quota config.
 
 ## Install / sync on another device
 
@@ -35,15 +29,21 @@ Reload pi after copying:
 /reload
 ```
 
-## Usage report commands
+## Context growth commands
 
 ```text
-/usage
-/usage all
-/usage quota 5h=150 week=1000
+/context-growth
+/context-growth reset
+/context-growth off
+/context-growth on
 ```
 
-Codex quota percentage uses Codex-call count, not token count. General token/cost stats still work for all models.
+Optional Codex call quotas can be supplied with environment variables:
+
+```text
+PI_CODEX_5H_CALL_QUOTA=150
+PI_CODEX_WEEKLY_CALL_QUOTA=1000
+```
 
 ## Privacy policy for this repo
 

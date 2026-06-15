@@ -1,8 +1,5 @@
 import type { ExtensionAPI, ExtensionContext, ContextUsage } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 
 type Segment = {
 	label: string;
@@ -16,9 +13,6 @@ const BAR_WIDTH = 36;
 const COLORS = [196, 202, 208, 220, 118, 48, 51, 45, 33, 99, 129, 165, 201, 207, 213];
 const BASE_COLOR = 93;
 const EMPTY_COLOR = 236;
-const AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-const STORE_FILE = join(AGENT_DIR, "extensions", "pi-extension", "model-usage", "sessions.json");
-const LEGACY_STORE_FILE = join(AGENT_DIR, "model-usage", "sessions.json");
 
 type CodexStats = {
 	fiveHourUsed: number;
@@ -66,10 +60,6 @@ function isCodexTurn(turn: { provider?: string; model?: string }): boolean {
 	return provider.includes("codex") || model.includes("codex") || (provider.includes("openai") && model.includes("gpt-5-codex"));
 }
 
-function sessionKey(ctx: ExtensionContext): string {
-	return ctx.sessionManager.getSessionFile() ?? `ephemeral:${ctx.cwd}`;
-}
-
 function currentCodexTurns(ctx: ExtensionContext) {
 	const turns: Array<{ time?: string; provider?: string; model?: string }> = [];
 	for (const entry of ctx.sessionManager.getBranch() as any[]) {
@@ -86,42 +76,28 @@ function currentCodexTurns(ctx: ExtensionContext) {
 	return turns;
 }
 
-function loadStore(): any {
-	const source = existsSync(STORE_FILE) ? STORE_FILE : LEGACY_STORE_FILE;
-	try {
-		return JSON.parse(readFileSync(source, "utf8"));
-	} catch {
-		return { version: 1, sessions: {}, quota: {} };
-	}
+function countWindowCodexCalls(turns: Array<{ time?: string }>, sinceMs: number): number {
+	return turns.filter((turn) => {
+		const time = turn.time ? Date.parse(turn.time) : Date.now();
+		return Number.isFinite(time) && time >= sinceMs;
+	}).length;
 }
 
-function countWindowCodexCalls(sessions: any[], sinceMs: number): number {
-	let count = 0;
-	for (const session of sessions) {
-		for (const turn of session.turns ?? []) {
-			const time = turn.time ? Date.parse(turn.time) : Date.parse(session.updatedAt);
-			if (Number.isFinite(time) && time >= sinceMs && isCodexTurn(turn)) count += 1;
-		}
-	}
-	return count;
+function defaultQuota() {
+	return {
+		fiveHourTokens: parseQuota(process.env.PI_CODEX_5H_CALL_QUOTA) ?? parseQuota(process.env.PI_CODEX_5H_TOKEN_QUOTA),
+		weeklyTokens: parseQuota(process.env.PI_CODEX_WEEKLY_CALL_QUOTA) ?? parseQuota(process.env.PI_CODEX_WEEKLY_TOKEN_QUOTA),
+	};
 }
 
 function computeCodexStats(ctx: ExtensionContext, previous?: CodexStats): CodexStats {
-	const store = loadStore();
-	const sessions = { ...(store.sessions ?? {}) };
-	const key = sessionKey(ctx);
-	sessions[key] = {
-		sessionFile: key,
-		cwd: ctx.cwd,
-		updatedAt: new Date().toISOString(),
-		turns: currentCodexTurns(ctx),
-	};
-
+	const turns = currentCodexTurns(ctx);
 	const now = Date.now();
-	const fiveHourUsed = countWindowCodexCalls(Object.values(sessions), now - 5 * 60 * 60 * 1000);
-	const weeklyUsed = countWindowCodexCalls(Object.values(sessions), now - 7 * 24 * 60 * 60 * 1000);
-	const fiveHourQuota = parseQuota(process.env.PI_CODEX_5H_TOKEN_QUOTA) ?? store.quota?.fiveHourTokens;
-	const weeklyQuota = parseQuota(process.env.PI_CODEX_WEEKLY_TOKEN_QUOTA) ?? store.quota?.weeklyTokens;
+	const fiveHourUsed = countWindowCodexCalls(turns, now - 5 * 60 * 60 * 1000);
+	const weeklyUsed = countWindowCodexCalls(turns, now - 7 * 24 * 60 * 60 * 1000);
+	const quota = defaultQuota();
+	const fiveHourQuota = quota.fiveHourTokens;
+	const weeklyQuota = quota.weeklyTokens;
 	const fiveHourRemaining = fiveHourQuota === undefined ? undefined : Math.max(0, fiveHourQuota - fiveHourUsed);
 	const weeklyRemaining = weeklyQuota === undefined ? undefined : Math.max(0, weeklyQuota - weeklyUsed);
 	return {
@@ -143,6 +119,15 @@ function fmtCalls(n: number | undefined): string {
 function fmtDelta(n: number | undefined): string {
 	if (!n) return "";
 	return n > 0 ? ` ↑${n.toLocaleString()}` : ` ↓${Math.abs(n).toLocaleString()}`;
+}
+
+function codexStatsLine(stats: CodexStats): string {
+	const fiveHourConfigured = stats.fiveHourQuota !== undefined;
+	const weeklyConfigured = stats.weeklyQuota !== undefined;
+	if (fiveHourConfigured || weeklyConfigured) {
+		return `5h left ${fmtCalls(stats.fiveHourRemaining)}/${fmtCalls(stats.fiveHourQuota)}${fmtDelta(stats.fiveHourRemainingDelta)} (used ${stats.fiveHourUsed.toLocaleString()}) • 7d left ${fmtCalls(stats.weeklyRemaining)}/${fmtCalls(stats.weeklyQuota)}${fmtDelta(stats.weeklyRemainingDelta)} (used ${stats.weeklyUsed.toLocaleString()})`;
+	}
+	return `calls 5h used ${stats.fiveHourUsed.toLocaleString()} • 7d used ${stats.weeklyUsed.toLocaleString()} (quota unset)`;
 }
 
 function renderStackedBar(baseTokens: number, segments: Segment[], usage: ContextUsage | undefined): string {
@@ -254,8 +239,9 @@ export default function (pi: ExtensionAPI) {
 						.slice(-6)
 						.map((s) => `${fg256(s.color, "■")} ${s.label}+${fmtTokens(s.tokens)}`)
 						.join(theme.fg("dim", "  "));
-					const codex = codexStats
-						? theme.fg("accent", "Codex") + theme.fg("dim", ` 5h left ${fmtCalls(codexStats.fiveHourRemaining)}/${fmtCalls(codexStats.fiveHourQuota)}${fmtDelta(codexStats.fiveHourRemainingDelta)} (used ${codexStats.fiveHourUsed.toLocaleString()}) • 7d left ${fmtCalls(codexStats.weeklyRemaining)}/${fmtCalls(codexStats.weeklyQuota)}${fmtDelta(codexStats.weeklyRemainingDelta)} (used ${codexStats.weeklyUsed.toLocaleString()})`)
+					const codexLine = codexStats ? codexStatsLine(codexStats) : undefined;
+					const codex = codexLine
+						? theme.fg("accent", "Codex") + theme.fg("dim", ` ${codexLine}`)
 						: undefined;
 
 					const lines = [title, bar];
@@ -306,8 +292,22 @@ export default function (pi: ExtensionAPI) {
 		installWidget(ctx);
 	});
 
+	pi.on("message_end", async (event, ctx) => {
+		// In recent pi versions the core context snapshot is refreshed when the
+		// assistant message is committed.  turn_end can fire before that happens,
+		// which left the widget installed but stuck at the startup baseline.
+		if ((event as any).message?.role === "assistant") record(ctx, "M");
+	});
+
 	pi.on("turn_end", async (_event, ctx) => {
 		record(ctx);
+	});
+
+	pi.on("agent_end", async (_event, ctx) => {
+		// Fallback for providers/event paths that only expose final usage after
+		// the whole agent run has completed. Duplicate samples are ignored because
+		// record() only appends when token count increases.
+		record(ctx, "A");
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {

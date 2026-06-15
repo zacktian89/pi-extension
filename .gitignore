@@ -9,8 +9,6 @@
 !extensions/
 !extensions/*.ts
 
-# Runtime data under model-usage/ is local-only.
-
 # Never commit secrets, sessions, trust decisions, or usage history.
 auth.json
 trust.json
