@@ -57,7 +57,7 @@ const AgyDelegateParams = Type.Object({
 	detachedTerminal: Type.Optional(
 		Type.Boolean({
 			description:
-				"Launch interactive agy in a separate terminal and return only a temporary Markdown report path. Default: true. Set false to use --print streaming capture.",
+				"Launch interactive agy in a separate terminal and return only a temporary Markdown report path. Default: false. Keep false for synchronous research so pi waits for agy and can continue from the captured result. Set true only when interactive auth/input is needed or the user explicitly wants a detached terminal.",
 		}),
 	),
 });
@@ -76,6 +76,7 @@ interface AgyDelegateDetails {
 	durationMs: number;
 	truncation?: TruncationResult;
 	reportFile?: string;
+	authRequired?: boolean;
 }
 
 interface AgyRunResult {
@@ -291,6 +292,29 @@ function trimCapturedText(text: string): { text: string; truncated: boolean } {
 	return { text: text.slice(Math.floor(text.length / 2)), truncated: true };
 }
 
+function detectAuthRequired(output: string): boolean {
+	return /Authentication required|Waiting for authentication|authorization code|oauth-callback|authentication timed out/i.test(output);
+}
+
+function extractFirstUrl(output: string): string | undefined {
+	return output.match(/https?:\/\/\S+/)?.[0];
+}
+
+function formatAuthRequiredNote(output: string): string {
+	const url = extractFirstUrl(output);
+	return [
+		"## Authentication required",
+		"",
+		"agy requested interactive authentication before it could complete the delegated task.",
+		url ? `- Login URL: ${url}` : undefined,
+		"- Synchronous mode cannot finish until agy is authenticated.",
+		"- Complete the login in a terminal/browser, then retry the same agy_delegate call with `detachedTerminal: false`.",
+		"- If interactive login is required during the task, run once with `detachedTerminal: true` so the user can complete authentication in the opened terminal; after auth is cached, switch back to synchronous mode.",
+	]
+		.filter(Boolean)
+		.join("\n");
+}
+
 async function runAgyWithPty(
 	args: string[],
 	cwd: string,
@@ -504,7 +528,7 @@ export default function (pi: ExtensionAPI) {
 		name: "agy_delegate",
 		label: "agy delegate",
 		description:
-			"Delegate a task to the local Antigravity CLI (agy). Best for web search/research, second-opinion review, planning, debugging analysis, and test suggestions. Uses a PTY runner when available because agy --print can emit empty output in non-TTY subprocesses on Windows. Output is streamed into pi and included/truncated in the final tool result. Set detachedTerminal=true to open interactive agy in a separate terminal and return only a temporary Markdown report path.",
+			"Delegate a task to the local Antigravity CLI (agy). Best for web search/research, second-opinion review, planning, debugging analysis, and test suggestions. Uses synchronous --print capture by default so pi waits for agy, streams output, and can continue from the final result. Uses a PTY runner when available because agy --print can emit empty output in non-TTY subprocesses on Windows. Set detachedTerminal=true only for interactive auth/input or when the user explicitly wants a separate terminal and temporary Markdown report path.",
 		promptSnippet: "Delegate web search/research, analysis, planning, debugging, test design, or review work to the local Antigravity CLI (agy).",
 		promptGuidelines: [
 			"Use agy_delegate instead of web_search when the user asks to search the web, look up current information, research a topic, compare ecosystem options, or gather external evidence.",
@@ -514,8 +538,10 @@ export default function (pi: ExtensionAPI) {
 			"Use agy_delegate when the user explicitly asks to use agy/Antigravity, or when a second opinion would help on complex review, planning, debugging, refactoring risk analysis, implementation strategy, or test design.",
 			"Do not use agy_delegate for trivial edits, simple file lookups, short direct answers, or tasks that pi can complete immediately without broad exploration.",
 			"Use agy_delegate in read-only mode by default: allowWrites=false and permissionMode='default'. Pi remains responsible for final code edits, verification, and user-facing conclusions.",
-			"agy_delegate defaults to detachedTerminal=true so agy opens in a separate interactive terminal and only a temporary Markdown report path is returned; set detachedTerminal=false only when pi must capture the full agy output via --print.",
-			"Read the returned temporary Markdown report only if the user asks, so agy's transcript stays out of pi context by default.",
+			"Use synchronous mode by default: omit detachedTerminal or set detachedTerminal=false so pi waits for agy, captures the final result, and can continue the task from agy's findings.",
+			"Use detachedTerminal=true only when agy needs interactive authentication/input, when synchronous auth fails, or when the user explicitly wants a separate terminal report workflow.",
+			"If synchronous agy reports Authentication required or authentication timed out, tell the user to complete agy login and retry synchronously; do not treat the failed auth output as a completed research result.",
+			"Read a detached temporary Markdown report only if the user asks, so agy's transcript stays out of pi context by default.",
 		],
 		parameters: AgyDelegateParams,
 
@@ -589,7 +615,7 @@ export default function (pi: ExtensionAPI) {
 			const permissionMode = (params.permissionMode ?? "default") as PermissionMode;
 			const allowWrites = params.allowWrites === true;
 			const model = params.model?.trim() || undefined;
-			const detachedTerminal = params.detachedTerminal !== false;
+			const detachedTerminal = params.detachedTerminal === true;
 
 			if (permissionMode === "autoApprove") {
 				if (!allowWrites) {
@@ -699,7 +725,9 @@ export default function (pi: ExtensionAPI) {
 			const stderr = result.stderr ?? "";
 			const combined = [stdout.trimEnd(), stderr.trimEnd() ? `\n\n[stderr]\n${stderr.trimEnd()}` : ""].join("").trim();
 
-			const body = combined || lastStreamText || "(agy produced no stdout/stderr. If runner=exec, install node-pty or run /reload after installing it.)";
+			const baseBody = combined || lastStreamText || "(agy produced no stdout/stderr. If runner=exec, install node-pty or run /reload after installing it.)";
+			const authRequired = detectAuthRequired(baseBody);
+			const body = authRequired ? `${baseBody}\n\n${formatAuthRequiredNote(baseBody)}` : baseBody;
 			const resultMarkdown = formatLiveOutput({
 				runner: result.runner,
 				exitCode: result.code,
@@ -734,6 +762,7 @@ export default function (pi: ExtensionAPI) {
 				killed: result.killed,
 				durationMs,
 				truncation: truncation.truncated ? truncation : undefined,
+				authRequired: authRequired || undefined,
 			};
 
 			return {
