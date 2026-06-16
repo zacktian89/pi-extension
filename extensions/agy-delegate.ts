@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	DEFAULT_MAX_BYTES,
@@ -26,7 +27,7 @@ function stringEnum<T extends readonly string[]>(values: T, description: string)
 
 type AgyMode = (typeof MODES)[number];
 type PermissionMode = (typeof PERMISSION_MODES)[number];
-type RunnerKind = "pty" | "exec";
+type RunnerKind = "pty" | "exec" | "detached";
 type StreamUpdate = (text: string, details?: Record<string, unknown>) => void;
 
 const AgyDelegateParams = Type.Object({
@@ -53,6 +54,12 @@ const AgyDelegateParams = Type.Object({
 				"Allow agy to modify files. Default: false. autoApprove additionally requires interactive user confirmation.",
 		}),
 	),
+	detachedTerminal: Type.Optional(
+		Type.Boolean({
+			description:
+				"Launch interactive agy in a separate terminal and return only a temporary Markdown report path. Default: false.",
+		}),
+	),
 });
 
 interface AgyDelegateDetails {
@@ -68,6 +75,7 @@ interface AgyDelegateDetails {
 	killed?: boolean;
 	durationMs: number;
 	truncation?: TruncationResult;
+	reportFile?: string;
 }
 
 interface AgyRunResult {
@@ -108,6 +116,15 @@ function shellDisplay(args: string[]): string {
 		.join(" ");
 }
 
+function buildCommonArgs(options: { addDirs: string[]; model?: string; permissionMode: PermissionMode }): string[] {
+	const args: string[] = [];
+	if (options.model?.trim()) args.push("--model", options.model.trim());
+	for (const dir of options.addDirs) args.push("--add-dir", dir);
+	if (options.permissionMode === "sandbox") args.push("--sandbox");
+	if (options.permissionMode === "autoApprove") args.push("--dangerously-skip-permissions");
+	return args;
+}
+
 function buildArgs(options: {
 	addDirs: string[];
 	timeoutSeconds: number;
@@ -115,12 +132,19 @@ function buildArgs(options: {
 	permissionMode: PermissionMode;
 	prompt: string;
 }): string[] {
-	const args: string[] = [];
-	if (options.model?.trim()) args.push("--model", options.model.trim());
-	for (const dir of options.addDirs) args.push("--add-dir", dir);
-	if (options.permissionMode === "sandbox") args.push("--sandbox");
-	if (options.permissionMode === "autoApprove") args.push("--dangerously-skip-permissions");
+	const args = buildCommonArgs(options);
 	args.push("--print", options.prompt, "--print-timeout", `${options.timeoutSeconds}s`);
+	return args;
+}
+
+function buildInteractiveArgs(options: {
+	addDirs: string[];
+	model?: string;
+	permissionMode: PermissionMode;
+	prompt: string;
+}): string[] {
+	const args = buildCommonArgs(options);
+	args.push(options.prompt);
 	return args;
 }
 
@@ -151,6 +175,45 @@ function loadNodePty(): any | undefined {
 			return undefined;
 		}
 	}
+}
+
+function createTempReportFile(task: string): string {
+	const dir = mkdtempSync(join(tmpdir(), "pi-agy-"));
+	const reportFile = join(dir, "agy-report.md");
+	writeFileSync(
+		reportFile,
+		`# agy detached report\n\nStatus: waiting for agy to write the final report.\n\n## Task\n\n${task}\n`,
+		"utf8",
+	);
+	return reportFile;
+}
+
+function withReportInstruction(task: string, reportFile: string): string {
+	return `${task}\n\n---\nYou are running in a detached terminal launched by pi. The user may interact with you directly in this terminal. When you are done, write a concise final Markdown report to this exact path:\n\n${reportFile}\n\nKeep the report focused on conclusions, decisions, commands/results that matter, and any next steps. Do not include hidden chain-of-thought.`;
+}
+
+function launchDetachedTerminal(args: string[], cwd: string): { command: string[]; pid?: number } {
+	const exe = findAgyExecutable();
+	let command: string[];
+	let child: ReturnType<typeof spawn>;
+
+	if (process.platform === "win32") {
+		command = ["wt.exe", "new-tab", "--title", "agy delegate", exe, ...args];
+		child = spawn(command[0], command.slice(1), { cwd, detached: true, stdio: "ignore", windowsHide: false });
+	} else if (process.platform === "darwin") {
+		const script = `cd ${JSON.stringify(cwd)} && ${shellDisplay([exe, ...args])}`;
+		command = ["osascript", "-e", `tell application "Terminal" to do script ${JSON.stringify(script)}`];
+		child = spawn(command[0], command.slice(1), { cwd, detached: true, stdio: "ignore" });
+	} else {
+		command = ["x-terminal-emulator", "-e", shellDisplay([exe, ...args])];
+		child = spawn(command[0], command.slice(1), { cwd, detached: true, stdio: "ignore" });
+	}
+
+	child.on("error", () => {
+		// Detached launch errors cannot be reported after returning; keep them from crashing pi.
+	});
+	child.unref();
+	return { command, pid: child.pid };
 }
 
 function findAgyExecutable(): string {
@@ -441,7 +504,7 @@ export default function (pi: ExtensionAPI) {
 		name: "agy_delegate",
 		label: "agy delegate",
 		description:
-			"Delegate a task to the local Antigravity CLI (agy). Best for web search/research, second-opinion review, planning, debugging analysis, and test suggestions. Uses a PTY runner when available because agy --print can emit empty output in non-TTY subprocesses on Windows. Output is streamed into pi and included/truncated in the final tool result; no report files are written.",
+			"Delegate a task to the local Antigravity CLI (agy). Best for web search/research, second-opinion review, planning, debugging analysis, and test suggestions. Uses a PTY runner when available because agy --print can emit empty output in non-TTY subprocesses on Windows. Output is streamed into pi and included/truncated in the final tool result. Set detachedTerminal=true to open interactive agy in a separate terminal and return only a temporary Markdown report path.",
 		promptSnippet: "Delegate web search/research, analysis, planning, debugging, test design, or review work to the local Antigravity CLI (agy).",
 		promptGuidelines: [
 			"Use agy_delegate instead of web_search when the user asks to search the web, look up current information, research a topic, compare ecosystem options, or gather external evidence.",
@@ -451,6 +514,7 @@ export default function (pi: ExtensionAPI) {
 			"Use agy_delegate when the user explicitly asks to use agy/Antigravity, or when a second opinion would help on complex review, planning, debugging, refactoring risk analysis, implementation strategy, or test design.",
 			"Do not use agy_delegate for trivial edits, simple file lookups, short direct answers, or tasks that pi can complete immediately without broad exploration.",
 			"Use agy_delegate in read-only mode by default: allowWrites=false and permissionMode='default'. Pi remains responsible for final code edits, verification, and user-facing conclusions.",
+			"Use agy_delegate with detachedTerminal=true when the user wants to watch or interact with agy directly while keeping agy's transcript out of pi context; read the returned temporary Markdown report only if the user asks.",
 		],
 		parameters: AgyDelegateParams,
 
@@ -475,13 +539,39 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme, context) {
+		renderResult(result, { expanded, isPartial }, theme, context) {
 			const content = result.content.find((item) => item.type === "text");
 			if (!content || content.type !== "text") return new Text("", 0, 0);
 
+			const details = (result.details ?? {}) as Record<string, unknown>;
+			const runner = typeof details.runner === "string" ? details.runner : undefined;
+			const reportFile = typeof details.reportFile === "string" ? details.reportFile : undefined;
+			const exitCode = typeof details.exitCode === "number" ? details.exitCode : undefined;
+			const durationMs = typeof details.durationMs === "number" ? details.durationMs : undefined;
+
+			if (!expanded) {
+				const status = isPartial
+					? "running"
+					: runner === "detached"
+						? "launched"
+						: exitCode === undefined
+							? "done"
+							: `exit ${exitCode}`;
+				const parts = [
+					theme.fg("toolOutput", `agy ${status}`),
+					runner ? theme.fg("dim", `[${runner}]`) : undefined,
+					durationMs !== undefined ? theme.fg("dim", `${durationMs}ms`) : undefined,
+					reportFile ? theme.fg("dim", `report: ${reportFile}`) : undefined,
+					theme.fg("muted", `(${keyHint("app.tools.expand", "show details")})`),
+				]
+					.filter(Boolean)
+					.join(" ");
+				return new Text(parts, 0, 0);
+			}
+
 			let text = content.text;
 			const task = typeof context.args?.task === "string" ? context.args.task : "";
-			if (expanded && task) {
+			if (task) {
 				text += `\n\n## Full agy prompt\n\n${task}`;
 			}
 
@@ -498,6 +588,7 @@ export default function (pi: ExtensionAPI) {
 			const permissionMode = (params.permissionMode ?? "default") as PermissionMode;
 			const allowWrites = params.allowWrites === true;
 			const model = params.model?.trim() || undefined;
+			const detachedTerminal = params.detachedTerminal === true;
 
 			if (permissionMode === "autoApprove") {
 				if (!allowWrites) {
@@ -528,6 +619,50 @@ export default function (pi: ExtensionAPI) {
 						} satisfies AgyDelegateDetails,
 					};
 				}
+			}
+
+			if (detachedTerminal) {
+				const start = Date.now();
+				const reportFile = createTempReportFile(task);
+				const prompt = withReportInstruction(task, reportFile);
+				const terminalAddDirs = Array.from(new Set([...addDirs, dirname(reportFile)]));
+				const command = buildInteractiveArgs({ addDirs: terminalAddDirs, model, permissionMode, prompt });
+				const redactedCommand = redactPrompt(command, prompt);
+				const launched = launchDetachedTerminal(command, ctx.cwd);
+				const displayCommand = [findAgyExecutable(), ...redactedCommand];
+				const launcherCommand = launched.command.map((arg) => (arg === prompt ? "<prompt>" : arg));
+				const durationMs = Date.now() - start;
+				const text = [
+					"# agy_delegate detached",
+					"",
+					"已在独立终端启动交互式 agy。pi 不会捕获该终端的完整输出，因此不会把过程写入上下文。",
+					"",
+					`- reportFile: ${reportFile}`,
+					launched.pid ? `- pid: ${launched.pid}` : undefined,
+					`- launcher: ${shellDisplay(launcherCommand)}`,
+					`- command: ${shellDisplay(displayCommand)}`,
+					"",
+					"agy 结束后会尝试把最终摘要写入上面的临时 Markdown 文件；需要时再让 pi 读取该文件即可。",
+				]
+					.filter(Boolean)
+					.join("\n");
+
+				return {
+					content: [{ type: "text", text }],
+					details: {
+						mode,
+						addDirs: terminalAddDirs,
+						timeoutSeconds,
+						permissionMode,
+						allowWrites,
+						model,
+						runner: "detached",
+						command: displayCommand,
+						exitCode: null,
+						durationMs,
+						reportFile,
+					} satisfies AgyDelegateDetails,
+				};
 			}
 
 			const prompt = task;
