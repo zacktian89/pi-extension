@@ -16,6 +16,9 @@
 !skills/*/
 !skills/*/SKILL.md
 
+!agents/
+!agents/**
+
 # Never commit secrets, sessions, trust decisions, or usage history.
 auth.json
 trust.json
