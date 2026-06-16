@@ -7,9 +7,14 @@
 !package.json
 !settings.example.json
 !index.ts
+!AGENTS.md
 
 !extensions/
 !extensions/*.ts
+
+!skills/
+!skills/*/
+!skills/*/SKILL.md
 
 # Never commit secrets, sessions, trust decisions, or usage history.
 auth.json
