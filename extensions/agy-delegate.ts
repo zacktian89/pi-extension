@@ -57,7 +57,7 @@ const AgyDelegateParams = Type.Object({
 	detachedTerminal: Type.Optional(
 		Type.Boolean({
 			description:
-				"Launch interactive agy in a separate terminal and return only a temporary Markdown report path. Default: false.",
+				"Launch interactive agy in a separate terminal and return only a temporary Markdown report path. Default: true. Set false to use --print streaming capture.",
 		}),
 	),
 });
@@ -514,7 +514,8 @@ export default function (pi: ExtensionAPI) {
 			"Use agy_delegate when the user explicitly asks to use agy/Antigravity, or when a second opinion would help on complex review, planning, debugging, refactoring risk analysis, implementation strategy, or test design.",
 			"Do not use agy_delegate for trivial edits, simple file lookups, short direct answers, or tasks that pi can complete immediately without broad exploration.",
 			"Use agy_delegate in read-only mode by default: allowWrites=false and permissionMode='default'. Pi remains responsible for final code edits, verification, and user-facing conclusions.",
-			"Use agy_delegate with detachedTerminal=true when the user wants to watch or interact with agy directly while keeping agy's transcript out of pi context; read the returned temporary Markdown report only if the user asks.",
+			"agy_delegate defaults to detachedTerminal=true so agy opens in a separate interactive terminal and only a temporary Markdown report path is returned; set detachedTerminal=false only when pi must capture the full agy output via --print.",
+			"Read the returned temporary Markdown report only if the user asks, so agy's transcript stays out of pi context by default.",
 		],
 		parameters: AgyDelegateParams,
 
@@ -588,7 +589,7 @@ export default function (pi: ExtensionAPI) {
 			const permissionMode = (params.permissionMode ?? "default") as PermissionMode;
 			const allowWrites = params.allowWrites === true;
 			const model = params.model?.trim() || undefined;
-			const detachedTerminal = params.detachedTerminal === true;
+			const detachedTerminal = params.detachedTerminal !== false;
 
 			if (permissionMode === "autoApprove") {
 				if (!allowWrites) {

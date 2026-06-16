@@ -26,7 +26,10 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/context-growth.ts"
+      "./extensions/context-growth.ts",
+      "./extensions/codex-usage.ts",
+      "./extensions/codegraph.ts",
+      "./extensions/agy-delegate.ts"
     ]
   },
   "peerDependencies": {

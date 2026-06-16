@@ -51,6 +51,19 @@ Only allow writes if the user explicitly requests it or approves it.
 
 ## After agy returns
 
+### Detached/report mode default
+
+When `agy_delegate` returns a temporary Markdown report path, and agy has already produced a usable conclusion/report, do **not** re-interpret, rewrite, or further synthesize agy's answer by default. Keep Pi's response minimal:
+
+```text
+调研完成，文档路径在这里：<path>.md
+是否需要进一步分析？默认不需要。
+```
+
+Only read the report file or perform secondary analysis if the user explicitly asks for it, or if the task cannot be completed without reading it. This keeps agy's transcript and conclusions out of Pi's context unless needed.
+
+### Normal captured-output mode
+
 1. Use agy's findings to narrow local follow-up.
 2. Verify important claims with targeted reads or commands when needed.
 3. Make final code edits in Pi.
@@ -68,7 +81,7 @@ When delegating web, documentation, ecosystem, industry-practice, or best-practi
 
 ## Research policy
 
-If agy gives a usable research result, do not do additional web searches.
+If agy gives a usable research result, do not do additional web searches. If the usable result is stored in a returned temporary Markdown report, do not read or summarize it unless the user asks; simply provide the report path and ask whether further analysis is needed.
 
 A research result is considered usable when it contains enough specific evidence for the user's request, such as URLs, citations, file paths, or reproducible references.
 
